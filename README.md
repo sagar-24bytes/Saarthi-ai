@@ -1,9 +1,6 @@
-# Personal Cognitive OS
+# Voice-Controlled AI Assistant with Tool Calling
 
-An autonomous, goal-driven, voice-based agentic AI system that plans, executes, remembers, and learns from user interactions to manage and organize a personal computer.
-
-This is not a chatbot.  
-This is an agentic operating system layer.
+A voice-controlled AI assistant that understands natural language commands, generates structured execution plans, maintains persistent memory using SQLite, and safely performs local filesystem operations through an allow-listed tool registry.
 
 ---
 
