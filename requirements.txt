@@ -1,0 +1,10 @@
+customtkinter
+sounddevice
+numpy
+scipy
+faster-whisper
+requests
+langgraph
+langchain-core
+pydantic
+pyinstaller
