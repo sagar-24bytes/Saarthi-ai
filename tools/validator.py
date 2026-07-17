@@ -4,6 +4,27 @@ from memory.path_resolver import resolve_path_from_text
 import os
 
 
+def is_path_allowed(path: str) -> bool:
+    from memory.persistent import get_allowed_folders
+    allowed = get_allowed_folders()
+    
+    path_norm = os.path.normpath(os.path.abspath(path)).lower()
+    path_norm = path_norm.rstrip(os.sep).rstrip("/")
+    
+    print(f"[DEBUG] is_path_allowed check: input='{path}' | normalized='{path_norm}' | allowed={allowed}")
+    
+    if not allowed:
+        return False
+    
+    for p in allowed:
+        p_norm = os.path.normpath(os.path.abspath(p)).lower()
+        p_norm = p_norm.rstrip(os.sep).rstrip("/")
+        print(f"[DEBUG] comparing: '{path_norm}' == '{p_norm}'")
+        if path_norm == p_norm or path_norm.startswith(p_norm + os.sep):
+            return True
+    return False
+
+
 def validate_plan_node(state):
     plan = state["plan"]
     user_text = state["user_text"]
@@ -13,7 +34,12 @@ def validate_plan_node(state):
 
     # 🚨 HARD STOP: no path, no file ops
     if not resolved_path:
-        print("❓ No folder resolved — skipping execution")
+        print("[ERROR] No folder resolved — skipping execution")
+        plan["steps"] = []
+        return {"plan": plan}
+
+    if not is_path_allowed(resolved_path):
+        print(f"[ERROR] This location is not currently accessible. Please add the folder using Access to Folders.")
         plan["steps"] = []
         return {"plan": plan}
 
@@ -21,6 +47,15 @@ def validate_plan_node(state):
     # 🌍 WORLD MODEL RESOLUTION (AUTHORITATIVE PATH)
     # =================================================
     
+    # Check steps for safety
+    for step in plan.get("steps", []):
+        args = step.get("args", {})
+        for arg_name, arg_val in args.items():
+            if arg_name in ("path", "source_directory", "destination_directory") and isinstance(arg_val, str):
+                if not is_path_allowed(arg_val):
+                    print(f"[ERROR] This location is not currently accessible. Please add the folder using Access to Folders.")
+                    plan["steps"] = []
+                    return {"plan": plan}
 
     for step in plan.get("steps", []):
         tool = step.get("tool")
