@@ -6,7 +6,9 @@ from tools.actions import open_folder
 from tools.search import search_files
 from memory.path_resolver import resolve_path_from_text
 from memory.context import context
+from planner.llm import check_ollama_status
 import re
+import sys
 
 
 planner_graph = build_planner_graph()
@@ -57,8 +59,22 @@ def extract_search_query(text: str) -> str:
 
 
 def main():
+    # ============================================================
+    # 🚀 STARTUP CHECK (OLLAMA & MODEL)
+    # ============================================================
+    status, error_msg = check_ollama_status()
+    if not status:
+        print(error_msg)
+        sys.exit(1)
 
-    print("🧠 Personal Cognitive OS booted. Say something…")
+    # ============================================================
+    # 🏷️ SAARTHI BANNER
+    # ============================================================
+    print("\n========================================")
+    print("                Saarthi                 ")
+    print("     Personal Desktop AI Assistant      ")
+    print("========================================\n")
+    print("🧠 Saarthi booted. Say something…")
 
     awaiting_open_target = False
 
@@ -94,7 +110,7 @@ def main():
         # 🔚 EXIT INTENT
         # ===============================
         if intent == "exit":
-            print("👋 Shutting down Cognitive OS.")
+            print("👋 Shutting down Saarthi.")
             break
 
         # ===============================
