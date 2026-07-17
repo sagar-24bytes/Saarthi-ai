@@ -1,277 +1,180 @@
-# Voice-Controlled AI Assistant with Tool Calling
+# Saarthi
 
-A voice-controlled AI assistant that understands natural language commands, generates structured execution plans, maintains persistent memory using SQLite, and safely performs local filesystem operations through an allow-listed tool registry.
+### A Personal Desktop AI Assistant
 
----
+A privacy-first, voice-controlled desktop AI assistant that safely automates local file and folder operations using offline speech recognition, local language models, and structured planning.
 
-## What it does
+***
 
-Personal Cognitive OS listens to natural language voice commands and:
+## 📌 Overview
 
-1. Understands user intent using a hybrid intent classifier and LLM planner  
-2. Decomposes goals into structured execution plans  
-3. Normalizes and grounds plans into safe, real system actions  
-4. Requires explicit user confirmation before executing filesystem changes  
-5. Executes tools locally using a secure allow-listed registry  
-6. Stores persistent memory across sessions using SQLite  
-7. Remembers context such as last accessed folder for natural follow-up commands  
+**Saarthi** (meaning *guide* or *charioteer*) is a personal desktop AI assistant that performs local file and folder automation using natural language, offline speech recognition, and local language models. 
 
----
+### Why Safe Execution Matters
+Traditional AI agents run shell commands directly on the host system. Saarthi secures this by executing only pre-validated Python filesystem operations within user-authorized directories (ACL), with explicit approval required for all multi-step plans.
 
-## Core Architecture
+***
+
+## 🖼️ Screenshots
+
+ **Main Dashboard**
+ 
+ ![Main Dashboard](screenshots/dashboard.png) 
+--
+**Access to Folders (ACL)** | **Plan Confirmation Dialog**|
+| :---: | :---: |
+| ![Access to Folders](screenshots/access_control.png) | ![Plan Confirmation](screenshots/confirmation.png) |
+
+***
+
+## ✨ Key Features
+
+* 🎙️ **Voice-Controlled Interaction**: Capture commands hands-free via default microphone.
+* 🔌 **100% Offline Processing**: Fast CPU transcription via `faster-whisper` and local LLM planning via `Ollama` (`llama3.2:3b`).
+* 🔗 **Context-Aware Follow-up**: Supports pronouns (*"it"*, *"this folder"*, *"that file"*) to reference previously resolved paths.
+* 🛡️ **Allowed Folders ACL**: Security boundary restricting operations strictly to user-authorized directories.
+* 🔍 **Recursive Fuzzy Search**: Searches allowed paths recursively with case-insensitive matching and optional file extensions.
+* 🚀 **Immediate Launching**: Automatically opens resolved directories or files in system-native applications.
+* 🗑️ **Impact Previews**: Locks input and displays exact plan steps, folder changes, and file counts before execution.
+* 🖥️ **Modern GUI**: Polished desktop dashboard styling built with CustomTkinter.
+
+***
+
+## ⚙️ How it Works
+
+```mermaid
+graph TD
+    User([Voice Input]) --> Whisper[Whisper Transcription]
+    Whisper --> Intent{Intent Router}
+    Intent -->|Direct Action e.g. Open| Exec[Executor]
+    Intent -->|Complex Action e.g. Organize| Planner[LLM Planner]
+    Planner --> Validator[Security Validator & ACL]
+    Validator --> GUI[GUI Plan Preview]
+    GUI -->|User Approved| Exec
+    Exec --> Filesystem[(Local Filesystem)]
+    Exec --> Context[(Session Memory)]
+```
+
+1. **Transcription & Routing**: Speech is transcribed locally and routed by intent (direct actions vs. planned tasks).
+2. **Context Resolution**: Pronouns are mapped to the last successfully resolved file/folder path.
+3. **Plan Generation**: Ollama generates a structured JSON execution plan.
+4. **Validation**: The sandboxed validator grounds paths and halts if any step attempts to access folders outside the ACL.
+5. **Approval & Run**: The GUI shows the impact estimate and waits for user confirmation before executing.
+
+***
+
+## 📂 Project Structure
 
 ```text
-Perception Layer
-Voice (Whisper – local, offline)
-↓
-Intent Layer
-Intent classifier (fast routing)
-↓
-Memory Layer
-Context memory + Persistent SQLite memory
-↓
-Planning Layer
-Gemini LLM + Structured JSON planning (LangGraph)
-↓
-Validation Layer
-Plan normalization, grounding, and safety enforcement
-↓
-Confirmation Layer
-User approval checkpoint (voice or keyboard)
-↓
-Execution Layer
-Defensive local tools (filesystem operations)
-↓
-Feedback Layer
-Execution results and context update
+Saarthi/
+├── memory/         # Context tracking, path resolver, and sqlite persistence
+├── planner/        # Intent classifier, Ollama LLM node, and LangGraph pipeline
+├── tools/          # Sandboxed actions registry, search engine, and plan validator
+├── voice/          # Audio stream capture and faster-whisper transcription
+├── build_exe.py    # Bundles python codebase into a single standalone EXE
+├── gui.py          # Main CustomTkinter desktop interface
+├── main.py         # Alternative interactive command-line interface
+└── requirements.txt# Pinned Python package dependencies
 ```
 
----
+***
 
-## Current Features
+## 🚀 Installation & Launching
 
-### Voice & Perception
-- 🎙️ Offline voice recognition using Faster-Whisper
-- Noise filtering and speech normalization
-- Fully local speech processing
-
-### Intent & Planning
-- 🧠 Hybrid intent classification (fast routing + LLM planning)
-- 📋 Structured JSON planning using Gemini + Pydantic
-- 🧩 Multi-step task decomposition using LangGraph
-
-### Memory System
-- 🧠 Session memory for contextual commands ("open it")
-- 💾 Persistent memory using SQLite (`memory.db`)
-- 🔁 Cross-session context retention
-- 🧭 Automatic last-path tracking and reuse
-
-### Safety & Validation
-- 🛡️ Strict tool allow-list registry
-- 🧭 Path grounding (prevents hallucinated filesystem paths)
-- 🔧 Argument normalization and correction
-- ❌ Blocks unknown or unsafe operations automatically
-
-### Confirmation Layer (Critical Safety Feature)
-- ✅ Explicit confirmation required before execution
-- 🎙️ Voice confirmation ("yes/no")
-- ⌨️ Keyboard fallback confirmation
-- 🔁 Retry handling for unclear speech
-- 📊 Impact preview showing operations and affected locations
-
-### Execution Layer
-- 📂 Folder organization by file type
-- 📁 Folder creation
-- 📄 File movement and categorization
-- 📂 Folder opening
-- ⚙️ Safe local filesystem execution
+### Option 1: Run the Executable (Recommended for Users)
+No Python installation or environment setup is required:
+1. Download and install Ollama from [ollama.com](https://ollama.com/).
+2. Run the model in your terminal:
+   ```bash
+   ollama pull llama3.2:3b
+   ```
+3. Run `Saarthi.exe` directly.
 
 ---
 
-## Example
+### Option 2: Run from Source (For Developers)
+Requires Python `3.10` or `3.11`.
 
-User says:
+1. **Clone the repository & create environment**
+   ```bash
+   git clone https://github.com/yourusername/Saarthi.git
+   cd Saarthi
+   python -m venv .venv
+   .venv\Scripts\activate
+   ```
 
-> "Organize my downloads folder"
+2. **Install requirements**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-System generates structured plan:
+3. **Pull model & run app**
+   ```bash
+   ollama pull llama3.2:3b
+   python gui.py
+   ```
 
-```json
-{
-  "goal": "Organize my downloads folder",
-  "steps": [
-    {"tool": "scan_folder", "args": {"path": "~/Downloads"}},
-    {"tool": "create_folder", "args": {"path": "~/Downloads/documents"}},
-    {"tool": "move_file", "args": {
-      "source_directory": "~/Downloads",
-      "destination_directory": "~/Downloads/documents",
-      "file_pattern": "*.pdf"
-    }}
-  ]
-}
+---
+
+### Option 3: Compile to Standalone `.exe`
+To package the app into a single `.exe` file inside `dist/`:
+```bash
+python build_exe.py
 ```
 
-Agent shows confirmation preview:
+***
 
-```text
-This will execute 10 operation(s)
-It will move 5 file(s)
+## 🎙️ Example Voice Commands
 
-Affected locations:
-~/Downloads
-~/Downloads/documents
-```
+| Intent Category | Voice Commands |
+| :--- | :--- |
+| **Open** | *"Open agent test folder"*, *"Open DSA folder"*, *"Open testing.pdf"* |
+| **Organize** | *"Organize the current folder"*, *"Clean up agent_test"* |
+| **Search** | *"Search for testing.pdf"*, *"Look for project file"* |
+| **Context Follow-up** | *"Organize it"*, *"Open it"* |
+| **App Control** | *"Exit"*, *"Quit"*, *"Close Saarthi"* |
 
-After approval, execution runs safely.
+***
 
----
+## 🛡️ Safety Model
+* **ACL Boundary**: Saarthi blocks execution instantly if a plan targets directory levels outside authorized paths.
+* **Confirmation Gate**: Previews estimated files affected and requires manual approval click for plan steps.
+* **Local Processing**: Audio recordings are deleted immediately after transcription. No data leaves your machine.
+* **Standard Lib APIs**: Commands run via controlled python `os` and `shutil` calls rather than arbitrary shell string commands.
 
-## Natural Language Context Example
+***
 
-```text
-User: Open my agent test folder
-Agent: Opens folder
+## 🛠️ Technologies Used
 
-(restart agent)
+| Technology | Purpose |
+| :--- | :--- |
+| **CustomTkinter** | Polished UI widgets, log views, and popups. |
+| **Ollama (Llama 3.2:3b)** | Local reasoning LLM backend for task planning. |
+| **LangGraph** | Pipeline state machine coordinating planning and validation. |
+| **Faster-Whisper** | Fast, CPU-optimized offline Speech-to-Text transcription. |
+| **SQLite** | Local memory database for folder permissions and state context. |
+| **Sounddevice & SciPy** | Hardware microphone capture and downsampling processing. |
 
-User: Open it
-Agent: Opens same folder using persistent memory
-```
+***
 
----
+## ⚠️ Limitations & Future Scope
 
-## Tech Stack
+### Current Limitations:
+* Optimized for Windows operating systems.
+* Speech recognition and planning prompts configured for English language commands.
+* Automated actions limited to local directory management and file searches.
 
-- Python 3.11+
-- Faster-Whisper (offline speech recognition)
-- LangGraph (execution graph orchestration)
-- LangChain (LLM integration)
-- Gemini API (planning)
-- Pydantic (structured output validation)
-- SQLite (persistent memory)
-- OS filesystem tools (safe local execution)
+### Future Scope:
+* Cross-platform compilation for macOS and Linux.
+* OCR integration to organize files based on contents.
+* Local vector RAG database for semantically searching document texts.
 
----
+***
 
-## Project Structure
+## 🤝 Contributing
+Feel free to fork the repository, open issues, or submit Pull Requests to help improve Saarthi's capabilities!
 
-```text
-cognitive-os-agent/
+***
 
-voice/          # speech perception
-planner/        # intent + LLM planning graph
-tools/          # execution tools and validator
-memory/         # context and persistent memory
-main.py         # cognitive loop entry point
-memory.db       # persistent memory database (ignored in git)
-```
-
----
-
-## Safety Architecture
-
-The agent enforces multiple safety layers:
-
-```text
-Intent filtering
-↓
-Tool allow-list enforcement
-↓
-Path grounding
-↓
-Plan validation
-↓
-User confirmation
-↓
-Execution
-```
-
-Execution cannot occur without passing all safety gates.
-
----
-
-## Current Capabilities
-
-Supported commands:
-
-```text
-Organize my downloads folder
-Open my documents folder
-Open it
-Exit
-```
-
-The agent understands contextual references and maintains state across sessions.
-
----
-
-## Persistent Memory
-
-The agent uses SQLite for durable memory storage:
-
-```text
-memory.db
-```
-
-Stores:
-
-- last_path
-- last_action
-- future: preferences, history, learning data
-
-This enables cross-session cognitive continuity.
-
----
-
-## Status
-
-Stable cognitive agent baseline achieved with:
-
-- End-to-end voice → intent → planning → confirmation → execution pipeline
-- Persistent memory support
-- Safety validation and confirmation layer
-- Context-aware execution
-
----
-
-## Roadmap
-
-### Phase 1 (In Progress)
-
-- File search capability
-- Enhanced confirmation with file previews
-- Improved intent resolution
-
-### Phase 2
-
-- Long-term memory expansion
-- Task history and reflection
-- Context-aware reasoning
-
-### Phase 3
-
-- Fully autonomous multi-step goal execution
-- Learning from user behavior
-- Self-improving planning
-
----
-
-## Vision
-
-This project aims to become a true cognitive operating system layer capable of:
-
-- Persistent memory
-- Autonomous task planning
-- Safe execution
-- Context awareness
-- Continuous learning
-
----
-
-## Inspired by
-
-- AutoGPT
-- BabyAGI
-- OpenAI function calling
-- Cognitive architectures
-- Autonomous agent systems
+## 📄 License
+Distributed under the MIT License. See LICENSE for more details.
