@@ -2,7 +2,7 @@
 
 ### A Personal Desktop AI Assistant
 
-A privacy-first, voice-controlled desktop AI assistant that safely automates local file and folder operations using offline speech recognition, local language models, and structured planning.
+A desktop AI assistant that understands natural language commands and safely automates local file and folder operations using offline speech recognition, local language models, and structured planning.
 
 ***
 
@@ -97,8 +97,8 @@ Requires Python `3.10` or `3.11`.
 
 1. **Clone the repository & create environment**
    ```bash
-   git clone https://github.com/yourusername/Saarthi.git
-   cd Saarthi
+   git clone https://github.com/sagar-24bytes/Saarthi-ai.git
+   cd Saarthi-ai
    python -m venv .venv
    .venv\Scripts\activate
    ```
@@ -116,12 +116,14 @@ Requires Python `3.10` or `3.11`.
 
 ---
 
-### Option 3: Compile to Standalone `.exe`
-To package the app into a single `.exe` file inside `dist/`:
+### Option 3: Build the Windows Executable
+
+To package Saarthi into a standalone Windows executable:
+
 ```bash
 python build_exe.py
 ```
-
+The generated executable will be created in the dist/ directory.
 ***
 
 ## 🎙️ Example Voice Commands
