@@ -61,7 +61,7 @@ def get_confirmation(max_attempts=3, wait_seconds=1.5):
 
 
 # ============================================================
-# MAIN CONFIRMATION NODE (LangGraph)
+# MAIN CONFIRMATION NODE (LangGraph — CLI)
 # ============================================================
 
 def confirmation_node(state):
@@ -145,3 +145,47 @@ def confirmation_node(state):
         print("Execution cancelled.")
 
     return state
+
+
+# ============================================================
+# GUI CONFIRMATION NODE (LangGraph — GUI only)
+# Uses interrupt() to pause the graph and yield control back
+# to the GUI.  The GUI resumes by calling graph.stream()
+# with Command(resume=True) or Command(resume=False).
+# ============================================================
+
+def gui_confirmation_node(state):
+    """
+    LangGraph node used exclusively by the GUI graph.
+
+    Pauses execution via interrupt() and passes the current validated
+    plan as the interrupt payload.  The GUI receives this payload,
+    displays the plan, and resumes the graph with the user's decision.
+
+    The return value of interrupt() is whatever the GUI passes as the
+    Command(resume=...) value — True (approved) or False (cancelled).
+    """
+    from langgraph.types import interrupt
+
+    plan = state.get("plan", {})
+    steps = plan.get("steps", [])
+
+    if not steps:
+        print("[LANGGRAPH] Confirmation node: plan is empty — skipping execution.")
+        return {"approved": False}
+
+    print("[LANGGRAPH] Confirmation node: pausing graph for GUI confirmation...")
+
+    # interrupt() suspends the graph here and sends `plan` as the
+    # payload.  Execution will only continue when the GUI calls
+    # graph.stream(Command(resume=approved), config=same_thread_config)
+    approved = interrupt(plan)
+
+    print(f"[LANGGRAPH] Confirmation node: resumed with approved={approved}")
+
+    if approved:
+        print("[LANGGRAPH] Approved. Proceeding to executor...")
+    else:
+        print("[LANGGRAPH] Cancelled. Graph will terminate without executing.")
+
+    return {"approved": approved}
