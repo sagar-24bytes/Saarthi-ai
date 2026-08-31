@@ -126,6 +126,64 @@ def resolve_file_or_folder_in_allowed_folders(target_name: str) -> list[str]:
         
     return unique_matches
 
+
+def resolve_exact_folder_in_allowed_folders(target_name: str) -> list[str]:
+    """
+    Searches allowed folders for directories whose basename is an EXACT
+    (case-insensitive, normalized) match for target_name.
+
+    Used by the 'open' intent so that "Open TCS folder" returns only
+    the directory named TCS, not every file whose path contains TCS.
+
+    Returns a list of absolute paths to matching directories only.
+    Files are never included in the result.
+    The existing ACL / allowed-folders check is preserved — only paths
+    inside allowed folders are ever returned.
+    """
+    cleaned_target = clean_speech_text(target_name)
+    norm_target = normalize_string(cleaned_target)
+
+    # Pronoun handling — delegate to context (same as existing logic)
+    if is_pronoun(norm_target):
+        last_path = getattr(context, "last_path", None)
+        if last_path and os.path.isdir(last_path):
+            print(f"[DEBUG] resolve_exact_folder: resolved pronoun to context path: {last_path}")
+            return [last_path]
+        return []
+
+    from memory.persistent import get_allowed_folders
+    allowed = get_allowed_folders()
+
+    print(f"[DEBUG] resolve_exact_folder: target='{target_name}' | normalized='{norm_target}'")
+
+    if not norm_target:
+        return []
+
+    matches = []
+
+    for root_folder in allowed:
+        if not os.path.exists(root_folder):
+            continue
+
+        # Check the root folder itself (e.g. ACL entry is B:/TCS)
+        norm_root_basename = normalize_string(os.path.basename(root_folder))
+        if norm_target == norm_root_basename and os.path.isdir(root_folder):
+            matches.append(os.path.abspath(root_folder))
+
+        # Walk subdirectories — exact directory-name match only
+        for root, dirs, _files in os.walk(root_folder):
+            for d in dirs:
+                norm_dir = normalize_string(d)
+                if norm_target == norm_dir:
+                    matches.append(os.path.abspath(os.path.join(root, d)))
+
+    unique_matches = list(set(matches))
+    print(f"[DEBUG] resolve_exact_folder: {len(unique_matches)} exact folder match(es) found")
+    for idx, m in enumerate(unique_matches):
+        print(f"[DEBUG] Exact match {idx + 1}: {m}")
+
+    return unique_matches
+
 def resolve_path_from_text(text: str | None) -> str | None:
     if not text:
         return None
