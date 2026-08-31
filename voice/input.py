@@ -10,7 +10,20 @@ from scipy.io.wavfile import write
 from faster_whisper import WhisperModel
 
 print("Loading Whisper model...")
-model = WhisperModel("small", device="cpu", compute_type="int8")
+
+# When running as a PyInstaller one-file EXE, the bundled model is extracted
+# to sys._MEIPASS at startup. In normal dev mode, WhisperModel("small") uses
+# the standard Hugging Face hub cache (~/.cache/huggingface/hub) as before.
+if getattr(sys, "frozen", False):
+    bundled_path = os.path.join(getattr(sys, "_MEIPASS", ""), "whisper_model")
+    if os.path.isdir(bundled_path):
+        _model_path = bundled_path
+    else:
+        _model_path = "small"
+else:
+    _model_path = "small"  # HF hub auto-download (dev behaviour unchanged)
+
+model = WhisperModel(_model_path, device="cpu", compute_type="int8")
 print("Whisper loaded.")
 
 # ============================================================
