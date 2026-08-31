@@ -5,16 +5,19 @@ import os
 import threading
 import queue
 import time
+import uuid
+import json
 import customtkinter as ctk
 
 from voice.input import listen_interactive
-from planner.planner import planner_node
-from tools.validator import validate_plan_node, is_path_allowed
-from tools.executor import execute_plan_node
+from planner.graph import build_gui_planner_graph
+from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 from planner.intent import classify_intent
 from tools.actions import open_folder
 from tools.search import search_files
-from memory.path_resolver import resolve_path_from_text, resolve_file_or_folder_in_allowed_folders, clean_speech_text
+from tools.validator import is_path_allowed
+from memory.path_resolver import resolve_path_from_text, resolve_file_or_folder_in_allowed_folders, resolve_exact_folder_in_allowed_folders, clean_speech_text
 from memory.context import context
 from planner.llm import check_ollama_status, MODEL_NAME
 from tools.confirmation import count_matching_files
@@ -119,6 +122,9 @@ class FileSelectionDialog(ctk.CTkToplevel):
         # Make modal
         self.transient(parent)
         self.grab_set()
+
+        # Closing with X must follow the same cancellation path as Cancel button
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
         
         # Label
         label = ctk.CTkLabel(
@@ -155,14 +161,25 @@ class FileSelectionDialog(ctk.CTkToplevel):
         # Cancel Button
         cancel_btn = ctk.CTkButton(
             self, text="Cancel", width=100,
-            command=self.destroy,
+            command=self.on_cancel,
             fg_color="#ef4444", hover_color="#dc2626"
         )
         cancel_btn.pack(pady=(10, 15))
         
     def on_select(self, path):
         self.callback(path)
+        self.grab_release()
         self.destroy()
+
+    def on_cancel(self):
+        """
+        Called when the user clicks Cancel or closes the dialog with X.
+        Releases the modal grab, destroys the window, and calls callback(None)
+        so the caller knows no selection was made and can restore the ready state.
+        """
+        self.grab_release()
+        self.destroy()
+        self.callback(None)
 
 
 class FolderManagementWindow(ctk.CTkToplevel):
@@ -322,6 +339,12 @@ class SaarthiApp(ctk.CTk):
         self.awaiting_confirmation = False
         self.current_state = {"user_text": "", "intent": "", "plan": {}}
         self.stop_event = threading.Event()
+
+        # LangGraph — single compiled GUI graph instance (reused for all sessions).
+        # Each planning session uses a fresh unique thread_id so MemorySaver
+        # checkpoints are isolated between runs.
+        self._graph = build_gui_planner_graph()
+        self._graph_thread_id = None  # set per session in _run_graph_until_interrupt
 
         # Build UI Components
         self.setup_ui()
@@ -754,25 +777,32 @@ class SaarthiApp(ctk.CTk):
             self.set_status("Ready", "#10b981")
             return
 
+        print(f"[GUI] User command received: '{user_text}'")
+
         # 🧠 Classify intent
         intent = classify_intent(user_text)
+        print(f"[GUI] Intent: {intent}")
         self.intent_label.configure(text=f"Detected Intent: {intent.upper()}")
 
+        # -------------------------------------------------------
+        # EXIT — simple UI confirmation only (no filesystem ops,
+        # no LangGraph needed, no hard-coded plan construction)
+        # -------------------------------------------------------
         if intent == "exit":
-            self.current_state = {
-                "user_text": user_text,
-                "intent": intent,
-                "plan": {
-                    "goal": "Exit Saarthi",
-                    "steps": [
-                        {
-                            "tool": "exit_app",
-                            "args": {}
-                        }
-                    ]
-                }
-            }
-            self.after(0, self._display_exit_plan_and_confirm)
+            from tkinter import messagebox
+            confirmed = messagebox.askyesno(
+                "Exit Saarthi",
+                "Are you sure you want to exit Saarthi?",
+                parent=self
+            )
+            if confirmed:
+                print("[INFO] Exit confirmed. Closing Saarthi...")
+                self.after(200, self.quit)
+            else:
+                print("[INFO] Exit cancelled.")
+                self.is_listening = False
+                self.mic_button.configure(state="normal")
+                self.set_status("Ready", "#10b981")
             return
 
         if intent == "no_action":
@@ -798,9 +828,25 @@ class SaarthiApp(ctk.CTk):
                     text = text[len(verb):].strip()
             return text
 
-        # Open actions execute immediately
+        # -------------------------------------------------------
+        # OPEN — direct backend operation (no planning needed)
+        # Uses existing open_folder() from tools/actions.py
+        # -------------------------------------------------------
         if intent == "open":
-            matches = resolve_file_or_folder_in_allowed_folders(user_text)
+            # Determine which resolver to use based on what the user is asking to open.
+            # If the user explicitly says "folder" or "directory" they want a named
+            # directory → use exact-folder resolver (preserves Issue 1 fix).
+            # Otherwise they may be asking for a file → use the broad resolver so that
+            # requests like "Open testing PDF" still find testing.pdf (fixes regression).
+            user_text_lower = user_text.lower()
+            is_explicit_folder_request = any(
+                w in user_text_lower.split()
+                for w in ("folder", "directory")
+            )
+            if is_explicit_folder_request:
+                matches = resolve_exact_folder_in_allowed_folders(user_text)
+            else:
+                matches = resolve_file_or_folder_in_allowed_folders(user_text)
             
             if len(matches) == 1:
                 match_path = matches[0]
@@ -820,6 +866,11 @@ class SaarthiApp(ctk.CTk):
                 print(f"[INFO] Multiple matches found for '{target}'. Awaiting user selection...")
                 
                 def on_chosen(chosen_path):
+                    if chosen_path is None:
+                        # User closed the dialog without selecting — cancel operation
+                        print("[INFO] Selection dialog closed without a choice. Operation cancelled.")
+                        self._finalize_direct_execution()
+                        return
                     print(f"[INFO] Opening chosen location: {chosen_path}")
                     try:
                         if os.path.isdir(chosen_path):
@@ -839,7 +890,10 @@ class SaarthiApp(ctk.CTk):
                 self._finalize_direct_execution()
                 return
 
-        # Search actions execute immediately
+        # -------------------------------------------------------
+        # SEARCH — direct backend operation (no planning needed)
+        # Uses existing search_files() from tools/search.py
+        # -------------------------------------------------------
         if intent == "search":
             path = resolve_path_from_text(user_text)
             if not path:
@@ -853,7 +907,7 @@ class SaarthiApp(ctk.CTk):
                 return
 
             if not is_path_allowed(path):
-                print(f"[ERROR] This location is not currently accessible. Please add the folder using Access to Folders.")
+                print("[ERROR] This location is not currently accessible. Please add the folder using Access to Folders.")
                 self.is_listening = False
                 self.mic_button.configure(state="normal")
                 self.set_status("Ready", "#10b981")
@@ -872,20 +926,26 @@ class SaarthiApp(ctk.CTk):
             threading.Thread(target=self._run_file_search, args=(path, query), daemon=True).start()
             return
 
-        # Resolve target path before planning to guide the LLM
+        # -------------------------------------------------------
+        # COMPLEX / PLANNER-BASED INTENTS (organize, create, etc.)
+        # Route through the existing LangGraph pipeline:
+        #   planner_node → validate_plan_node → interrupt()
+        #   → GUI confirmation → executor (via graph resume)
+        # The GUI does NOT manually call these nodes.
+        # -------------------------------------------------------
         resolved_path = resolve_path_from_text(user_text)
 
-        # Planning flow (for organize / create, etc.)
-        self.current_state = {
-            "user_text": user_text,
-            "intent": intent,
-            "resolved_path": resolved_path,
-            "plan": {}
-        }
-        
-        # Run planning in background
+        print(f"[GUI] Sending command to LangGraph (intent={intent}, path={resolved_path})")
+
+        # Store the pending inputs — _run_graph_until_interrupt() reads these
+        self._pending_user_text = user_text
+        self._pending_intent = intent
+        self._pending_resolved_path = resolved_path
+
+        # Run the LangGraph pipeline in a background thread so the UI
+        # stays responsive while the LLM generates the plan
         self.set_status("Generating Plan...", "#2563eb")
-        threading.Thread(target=self._run_planning, daemon=True).start()
+        threading.Thread(target=self._run_graph_until_interrupt, daemon=True).start()
 
     def _run_file_search(self, path, query):
         try:
@@ -908,40 +968,83 @@ class SaarthiApp(ctk.CTk):
         self.mic_button.configure(state="normal")
         self.set_status("Ready", "#10b981")
 
-    def _run_planning(self):
+    def _run_graph_until_interrupt(self):
+        """
+        Streams the compiled GUI LangGraph for a new planning session.
+
+        The graph runs: planner_node → validate_plan_node → gui_confirmation_node.
+        gui_confirmation_node calls interrupt(plan) which suspends the graph and
+        emits an Interrupt event.  We stream until the graph pauses, capture the
+        plan from the last state snapshot, then hand off to _display_plan_and_confirm
+        on the main thread.
+
+        The graph is NOT manually orchestrated here — LangGraph controls the flow.
+        """
+        # Each planning session gets a unique thread_id so MemorySaver checkpoints
+        # are fully isolated between concurrent or sequential runs.
+        thread_id = str(uuid.uuid4())
+        self._graph_thread_id = thread_id
+        config = {"configurable": {"thread_id": thread_id}}
+
+        state_input = {
+            "messages": [HumanMessage(content=self._pending_user_text)],
+            "user_text": self._pending_user_text,
+            "intent": self._pending_intent,
+            "resolved_path": self._pending_resolved_path,
+            "plan": {},
+        }
+
+        print("[LANGGRAPH] Starting graph stream (planner → validator → confirmation)...")
+
+        last_state = None
         try:
-            state = self.current_state.copy()
-            # 1. Planner node
-            planner_res = planner_node(state)
-            state.update(planner_res)
-            
-            # 2. Validator node
-            validator_res = validate_plan_node(state)
-            state.update(validator_res)
-            
-            self.current_state = state
-            self.after(0, self._display_plan_and_confirm)
+            for chunk in self._graph.stream(
+                state_input,
+                config=config,
+                stream_mode="values"
+            ):
+                last_state = chunk  # accumulate last full state snapshot
         except Exception as e:
-            print(f"[ERROR] Planning failed: {e}")
+            print(f"[ERROR] Graph stream failed: {e}")
             self.after(0, self._finalize_direct_execution)
+            return
 
-    def _display_plan_and_confirm(self):
-        plan = self.current_state.get("plan", {})
-        steps = plan.get("steps", [])
+        # After the stream loop exits the graph is paused at interrupt().
+        # last_state contains the full validated state including the plan.
+        print("[LANGGRAPH] Waiting for GUI confirmation...")
+        self.after(0, lambda: self._display_plan_and_confirm(last_state))
 
-        if not steps:
-            error_msg = plan.get("error", "No steps generated. Plan is empty.")
-            self.update_plan_text(f"Error: {error_msg}")
+    def _display_plan_and_confirm(self, langgraph_state):
+        """
+        Displays the validated plan produced by LangGraph and enables the
+        Confirm / Cancel buttons.
+
+        langgraph_state is the final state snapshot from the graph stream —
+        it contains the plan as produced by planner_node and validated by
+        validate_plan_node.  This is NOT a manually constructed dict.
+        """
+        if langgraph_state is None:
+            print("[ERROR] No state received from LangGraph.")
             self._finalize_direct_execution()
             return
 
-        # Print plan JSON formatted
-        import json
+        plan = langgraph_state.get("plan", {})
+        steps = plan.get("steps", [])
+
+        if not steps:
+            error_msg = plan.get("error", "No steps generated. The validator may have blocked the plan (check path permissions).")
+            print(f"[INFO] Plan is empty: {error_msg}")
+            self.update_plan_text(f"No executable steps.\n\n{error_msg}")
+            self._finalize_direct_execution()
+            return
+
+        # Display the actual plan from LangGraph (JSON formatted)
         formatted_plan = json.dumps(plan, indent=2)
         self.update_plan_text(formatted_plan)
-        print("[INFO] Execution plan generated.")
+        print("[INFO] Execution plan received from LangGraph backend.")
+        print("[LANGGRAPH] Waiting for GUI confirmation...")
 
-        # Calculate estimated impact
+        # Calculate estimated impact for the impact label
         total_files = 0
         affected_locations = set()
         for step in steps:
@@ -959,7 +1062,7 @@ class SaarthiApp(ctk.CTk):
                 pattern = args.get("file_pattern", "*")
                 total_files += count_matching_files(src, pattern)
 
-        # Update impact labels
+        # Update impact label
         locs_str = f"{len(affected_locations)} location(s)"
         impact_msg = f"Operations: {len(steps)} | Files affected: {total_files} | Impacted: {locs_str}"
         self.impact_label.configure(text=impact_msg, text_color="#2563eb")
@@ -972,12 +1075,21 @@ class SaarthiApp(ctk.CTk):
         # Keep mic button disabled while waiting for plan approval
         self.mic_button.configure(state="disabled")
         self.set_status("Waiting for Confirmation...", "#2563eb")
-        print("[INFO] Waiting for confirmation.")
+        print("[GUI] Displaying plan. Waiting for user confirmation...")
 
     # ============================================================
     # UI BUTTON CALLBACKS
     # ============================================================
     def confirm_execution(self):
+        """
+        Called when the user clicks 'Confirm & Run'.
+
+        Resumes the SAME LangGraph graph thread that was paused at
+        interrupt() inside gui_confirmation_node.  LangGraph's existing
+        conditional edge (approved=True → executor) will route to
+        execute_plan_node automatically — the GUI does NOT call the
+        executor directly.
+        """
         if not self.awaiting_confirmation:
             return
         
@@ -985,53 +1097,81 @@ class SaarthiApp(ctk.CTk):
         self.btn_confirm.configure(state="disabled")
         self.btn_cancel.configure(state="disabled")
         self.set_status("Executing...", "#2563eb")
-        print("[INFO] Executing plan...")
+        print("[GUI] User confirmed. Resuming LangGraph with approved=True...")
 
-        # Run execution in background thread
-        threading.Thread(target=self._run_execution, daemon=True).start()
+        # Resume in a background thread so the UI stays responsive
+        threading.Thread(target=self._resume_graph, args=(True,), daemon=True).start()
 
     def cancel_execution(self):
+        """
+        Called when the user clicks 'Cancel'.
+
+        Resumes the SAME LangGraph graph thread with approved=False.
+        LangGraph's conditional edge (approved=False → END) will
+        terminate the graph without reaching execute_plan_node.
+        """
         if not self.awaiting_confirmation:
             return
 
-        print("[INFO] Execution plan cancelled by user.")
+        self.awaiting_confirmation = False
+        self.btn_confirm.configure(state="disabled")
+        self.btn_cancel.configure(state="disabled")
+        print("[GUI] User cancelled. Resuming LangGraph with approved=False...")
+
+        # Resume the graph in background (it will reach END without executing)
+        threading.Thread(target=self._resume_graph, args=(False,), daemon=True).start()
+
+        # Reset UI immediately — no need to wait for graph termination
         self.reset_plan_ui()
-        
-        # Re-enable mic button after cancelling plan
         self.is_listening = False
         self.mic_button.configure(state="normal")
         self.set_status("Ready", "#10b981")
 
-    def _display_exit_plan_and_confirm(self):
-        import json
-        plan = self.current_state.get("plan", {})
-        self.update_plan_text(json.dumps(plan, indent=2))
-        self.impact_label.configure(text="Are you sure you want to exit Saarthi?", text_color="#ef4444")
-        
-        self.awaiting_confirmation = True
-        self.btn_confirm.configure(state="normal")
-        self.btn_cancel.configure(state="normal")
-        self.mic_button.configure(state="disabled")
-        self.set_status("Waiting for Confirmation...", "#ef4444")
-        print("[INFO] Exit confirmation requested.")
+    def _resume_graph(self, approved: bool):
+        """
+        Resumes the paused LangGraph graph on the same thread_id.
 
-    def _run_execution(self):
+        When approved=True:
+            LangGraph's conditional edge routes confirmation → executor.
+            execute_plan_node runs (via tools/executor.py → tools/actions.py).
+
+        When approved=False:
+            LangGraph's conditional edge routes confirmation → END.
+            The executor is NOT called.
+
+        The GUI does NOT call execute_plan_node directly.
+        """
+        if self._graph_thread_id is None:
+            print("[ERROR] No active graph thread to resume.")
+            return
+
+        config = {"configurable": {"thread_id": self._graph_thread_id}}
+
+        print(f"[LANGGRAPH] Resuming graph (thread={self._graph_thread_id}, approved={approved})...")
+
         try:
-            if self.current_state.get("intent") == "exit":
-                print("[INFO] Exit confirmed. Closing Saarthi...")
-                self.after(500, self.quit)
-                return
+            # Command(resume=approved) feeds the interrupt() return value in
+            # gui_confirmation_node, then the graph continues from that point.
+            # If approved=True  → conditional edge sends to executor node.
+            # If approved=False → conditional edge sends to END.
+            for chunk in self._graph.stream(
+                Command(resume=approved),
+                config=config,
+                stream_mode="values"
+            ):
+                pass  # stream runs executor_node internally; output goes to stdout
 
-            execute_plan_node(self.current_state)
-            print("[SUCCESS] Plan executed successfully.")
-            self.after(0, lambda: self.set_status("Completed", "#10b981"))
-        except Exception as e:
-            print(f"[ERROR] Execution failed: {e}")
-            self.after(0, lambda: self.set_status("Error", "#dc2626"))
-        finally:
-            if self.current_state.get("intent") != "exit":
-                # Wait 3 seconds in Completed state, then reset UI and restore microphone button
+            if approved:
+                print("[LANGGRAPH] Executor node completed. Plan executed successfully.")
+                self.after(0, lambda: self.set_status("Completed", "#10b981"))
                 self.after(3000, self._finalize_execution_reset)
+            else:
+                print("[LANGGRAPH] Graph terminated (cancelled). Executor was NOT called.")
+
+        except Exception as e:
+            print(f"[ERROR] Graph resume failed: {e}")
+            self.after(0, lambda: self.set_status("Error", "#dc2626"))
+            self.after(3000, self._finalize_execution_reset)
 
     def _finalize_execution_reset(self):
         self.reset_plan_ui()
