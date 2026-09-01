@@ -2,7 +2,7 @@
 
 ### A Personal Desktop AI Assistant
 
-A desktop AI assistant that understands natural language commands and safely automates local file and folder operations using offline speech recognition, local language models, and structured planning.
+A desktop AI assistant that understands natural language commands and safely automates local file and folder operations using offline speech recognition, local language models, and a LangGraph-based workflow for structured planning and execution.
 
 ***
 
@@ -29,14 +29,15 @@ Traditional AI agents run shell commands directly on the host system. Saarthi se
 
 ## ✨ Key Features
 
-* 🎙️ **Voice-Controlled Interaction**: Capture commands hands-free via default microphone.
-* 🔌 **100% Offline Processing**: Fast CPU transcription via `faster-whisper` and local LLM planning via `Ollama` (`llama3.2:3b`).
-* 🔗 **Context-Aware Follow-up**: Supports pronouns (*"it"*, *"this folder"*, *"that file"*) to reference previously resolved paths.
-* 🛡️ **Allowed Folders ACL**: Security boundary restricting operations strictly to user-authorized directories.
-* 🔍 **Recursive Fuzzy Search**: Searches allowed paths recursively with case-insensitive matching and optional file extensions.
-* 🚀 **Immediate Launching**: Automatically opens resolved directories or files in system-native applications.
-* 🗑️ **Impact Previews**: Locks input and displays exact plan steps, folder changes, and file counts before execution.
-* 🖥️ **Modern GUI**: Polished desktop dashboard styling built with CustomTkinter.
+* 🎙️ **Voice-Controlled Interaction**: Control Saarthi using natural voice commands through the microphone.
+* 🔌 **100% Offline Processing**: Uses `faster-whisper` for speech-to-text and `Ollama` (`llama3.2:3b`) for local task planning without cloud services.
+* 🔗 **LangGraph Workflow**: Uses `LangGraph` to manage the steps for complex tasks, including planning, security checks, confirmation, and execution.
+* 🧠 **Context-Aware Follow-up**: Understands commands like *"open it"*, *"organize this folder"*, and *"move that file"* using previously resolved paths.
+* 🛡️ **Allowed Folders (ACL)**: Limits file operations to folders explicitly authorized by the user.
+* 🔍 **Recursive File Search**: Searches through allowed folders and their subfolders using case-insensitive and partial-name matching.
+* 🚀 **File & Folder Opening**: Opens resolved files and folders using the system's default applications.
+* 🗑️ **Plan Preview & Confirmation**: Shows the planned changes and affected files before requiring user confirmation.
+* 🖥️ **Desktop GUI**: Provides a user-friendly desktop interface built with `CustomTkinter`.
 
 ***
 
@@ -44,22 +45,24 @@ Traditional AI agents run shell commands directly on the host system. Saarthi se
 
 ```mermaid
 graph TD
-    User([Voice Input]) --> Whisper[Whisper Transcription]
+    User([Voice Input]) --> Whisper[Faster-Whisper Transcription]
     Whisper --> Intent{Intent Router}
     Intent -->|Direct Action e.g. Open| Exec[Executor]
-    Intent -->|Complex Action e.g. Organize| Planner[LLM Planner]
+    Intent -->|Complex Action e.g. Organize| LangGraph[LangGraph Workflow]
+    LangGraph --> Planner[Ollama LLM Planner]
     Planner --> Validator[Security Validator & ACL]
     Validator --> GUI[GUI Plan Preview]
     GUI -->|User Approved| Exec
     Exec --> Filesystem[(Local Filesystem)]
-    Exec --> Context[(Session Memory)]
+    Exec --> Context[(SQLite Session Memory)]
 ```
 
-1. **Transcription & Routing**: Speech is transcribed locally and routed by intent (direct actions vs. planned tasks).
+1. **Transcription & Routing**: Speech is transcribed locally and routed by intent into either a direct action or the LangGraph-based planning workflow.
 2. **Context Resolution**: Pronouns are mapped to the last successfully resolved file/folder path.
-3. **Plan Generation**: Ollama generates a structured JSON execution plan.
-4. **Validation**: The sandboxed validator grounds paths and halts if any step attempts to access folders outside the ACL.
-5. **Approval & Run**: The GUI shows the impact estimate and waits for user confirmation before executing.
+3. **LangGraph Planning**: For complex tasks, LangGraph manages the workflow state and coordinates the Ollama planner, security validation, user approval, and execution stages.
+4. **Plan Generation**: Ollama generates a structured JSON execution plan.
+5. **Validation**: The sandboxed validator grounds paths and halts if any step attempts to access folders outside the ACL.
+6. **Approval & Run**: The GUI shows the impact estimate and waits for user confirmation before executing.
 
 ***
 
@@ -152,7 +155,7 @@ The generated executable will be created in the dist/ directory.
 | :--- | :--- |
 | **CustomTkinter** | Polished UI widgets, log views, and popups. |
 | **Ollama (Llama 3.2:3b)** | Local reasoning LLM backend for task planning. |
-| **LangGraph** | Pipeline state machine coordinating planning and validation. |
+| **LangGraph** | Stateful workflow orchestration connecting planning, validation, approval, and execution. |
 | **Faster-Whisper** | Fast, CPU-optimized offline Speech-to-Text transcription. |
 | **SQLite** | Local memory database for folder permissions and state context. |
 | **Sounddevice & SciPy** | Hardware microphone capture and downsampling processing. |
